@@ -8,7 +8,9 @@ const DEFAULT_SETTINGS = {
 };
 
 const blankState = () => ({ mode: "outside", windowIndex: -1, elapsedMs: 0, breakEndsAt: 0, lastTickAt: Date.now(), date: dateKey() });
-function dateKey(d = new Date()) { return d.toISOString().slice(0, 10); }
+function dateKey(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 function minutes(t) { const [h, m] = t.split(":").map(Number); return h * 60 + m; }
 function nowMinutes() { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
 function getWindow(settings, minute = nowMinutes()) {

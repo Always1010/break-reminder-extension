@@ -1,1 +1,49 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>休息提醒设置</title><link rel="stylesheet" href="ui.css"></head><body class="page"><h1>休息提醒设置</h1><p class="intro">所有默认参数都可以调整。插件打开时持续计时，电脑锁屏或睡眠时自动暂停。</p><section class="card"><h2>计时参数</h2><div class="grid"><div class="field"><label for="work">工作间隔（分钟）</label><input id="work" type="number" min="1" max="240"></div><div class="field"><label for="break">休息时长（分钟）</label><input id="break" type="number" min="1" max="120"></div></div></section><section class="card"><h2>提醒时间轴</h2><p class="muted">拖动下方时间输入框的时间，设置一个或多个工作时段。时段之外自动视为休息。</p><div class="timeline"></div><div class="axis"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div><div id="windows"></div><button id="add" class="add">＋ 添加工作时段</button></section><section class="card"><h2>声音提醒</h2><div class="grid"><div class="field"><label for="sound">声音</label><select id="sound"><option value="alarm">闹钟式铃声</option><option value="soft">柔和铃声</option></select></div><div class="field"><label for="volume">音量（0 - 100）</label><input id="volume" type="number" min="0" max="100"></div></div><div class="field" style="margin-top:18px"><label for="custom">自定义声音（可选，MP3/WAV/OGG）</label><input id="custom" type="file" accept="audio/*"></div></section><button id="save" class="save">保存设置</button><span id="saved" class="saved"></span><script src="options.js"></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>休息提醒设置</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="page">
+  <h1>休息提醒设置</h1>
+  <p class="intro">浏览器打开时持续计时，电脑锁屏或睡眠时自动暂停。</p>
+
+  <section class="card">
+    <h2>计时参数</h2>
+    <div class="grid">
+      <div class="field"><label for="work">工作间隔（分钟）</label><input id="work" type="number" min="1" max="240"></div>
+      <div class="field"><label for="break">休息时长（分钟）</label><input id="break" type="number" min="1" max="120"></div>
+    </div>
+  </section>
+
+  <section class="card schedule-card">
+    <div class="schedule-heading">
+      <div><h2>提醒时间轴</h2><p class="muted">绿色区域进行工作计时，空白区域自动休息。</p></div>
+      <button id="add" class="add" type="button">＋ 添加时段</button>
+    </div>
+    <div class="time-axis" aria-hidden="true"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+    <div id="scheduleTimeline" class="schedule-timeline" role="application" aria-label="24小时工作时段。拖动色块移动，拖动两端调整时间。"></div>
+    <p class="timeline-help">拖动整个色块调整时段；拖动左右边缘改变开始或结束时间；点击空白处可直接新增。</p>
+    <div id="periodEditor" class="period-editor" hidden>
+      <div class="field"><label for="selectedStart">开始时间</label><input id="selectedStart" type="time" step="300"></div>
+      <div class="field"><label for="selectedEnd">结束时间</label><input id="selectedEnd" type="time" step="300"></div>
+      <button id="deletePeriod" class="delete" type="button">删除时段</button>
+    </div>
+    <p id="timelineMessage" class="timeline-message" aria-live="polite"></p>
+  </section>
+
+  <section class="card">
+    <h2>声音提醒</h2>
+    <div class="grid">
+      <div class="field"><label for="sound">声音</label><select id="sound"><option value="alarm">闹钟式铃声</option><option value="soft">柔和铃声</option></select></div>
+      <div class="field"><label for="volume">音量（0 - 100）</label><input id="volume" type="number" min="0" max="100"></div>
+    </div>
+    <div class="field custom-sound"><label for="custom">自定义声音（可选，MP3/WAV/OGG）</label><input id="custom" type="file" accept="audio/*"></div>
+  </section>
+
+  <button id="save" class="save" type="button">保存设置</button><span id="saved" class="saved"></span>
+  <script src="options.js"></script>
+</body>
+</html>
