@@ -3,6 +3,7 @@ const DEFAULTS = {
   breakMinutes: 10,
   volume: 0.8,
   sound: "alarm",
+  soundDurationMinutes: 5,
   customSound: "",
   windows: [{ start: "08:30", end: "22:00" }]
 };
@@ -181,7 +182,23 @@ $("testReminder").addEventListener("click", async () => {
   button.disabled = true;
   button.textContent = "正在测试…";
   try {
-    const response = await chrome.runtime.sendMessage({ type: "testReminder" });
+    let customSound = settings.customSound;
+    const previewFile = $("custom").files[0];
+    if (previewFile) {
+      customSound = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(previewFile);
+      });
+    }
+    const response = await chrome.runtime.sendMessage({
+      type: "testReminder",
+      sound: $("sound").value,
+      volume: Math.min(1, Math.max(0, Number($("volume").value) / 100)),
+      soundDurationMinutes: Math.min(30, Math.max(0.5, Number($("soundDuration").value) || 5)),
+      customSound
+    });
     if (!response?.ok) throw new Error(response?.error || "测试提醒失败");
     announce(response.warning ? `测试已发出，但有部分异常：${response.warning}` : "测试提醒已发出。你应该同时看到弹窗、系统通知并听到声音。");
   } catch (error) {
@@ -190,6 +207,10 @@ $("testReminder").addEventListener("click", async () => {
     button.disabled = false;
     button.textContent = "🔔 测试声音、通知和弹窗";
   }
+});
+
+$("custom").addEventListener("change", () => {
+  if ($("custom").files.length) $("sound").value = "custom";
 });
 
 async function init() {
@@ -201,6 +222,7 @@ async function init() {
   $("break").value = settings.breakMinutes;
   $("volume").value = Math.round(settings.volume * 100);
   $("sound").value = settings.sound;
+  $("soundDuration").value = settings.soundDurationMinutes;
   renderTimeline();
 }
 
@@ -226,6 +248,7 @@ $("save").addEventListener("click", async () => {
     breakMinutes: Math.max(1, Number($("break").value)),
     volume: Math.min(1, Math.max(0, Number($("volume").value) / 100)),
     sound: $("sound").value,
+    soundDurationMinutes: Math.min(30, Math.max(0.5, Number($("soundDuration").value) || 5)),
     customSound,
     windows: normalizePeriods(periods).map(period => ({ start: toTime(period.start), end: toTime(Math.min(1439, period.end)) }))
   };

@@ -6,6 +6,7 @@ const storage = {
     breakMinutes: 10,
     volume: 0.8,
     sound: "alarm",
+    soundDurationMinutes: 5,
     customSound: "",
     windows: [{ start: "00:00", end: "24:00" }]
   }
@@ -13,6 +14,7 @@ const storage = {
 const alarms = new Map();
 const calls = { notifications: [], windows: [], messages: [] };
 let messageListener;
+let offscreenOpen = false;
 
 function eventSlot(setter) {
   return { addListener(listener) { setter(listener); } };
@@ -35,7 +37,7 @@ globalThis.chrome = {
     onAlarm: eventSlot(() => {})
   },
   idle: { async queryState() { return "active"; } },
-  offscreen: { async createDocument() {} },
+  offscreen: { async createDocument() { offscreenOpen = true; } },
   notifications: {
     async create(id, options) { calls.notifications.push({ id, options }); }
   },
@@ -46,7 +48,7 @@ globalThis.chrome = {
   },
   runtime: {
     getURL(path) { return `chrome-extension://test/${path}`; },
-    async getContexts() { return []; },
+    async getContexts() { return offscreenOpen ? [{ contextType: "OFFSCREEN_DOCUMENT" }] : []; },
     async sendMessage(message) { calls.messages.push(message); return { ok: true }; },
     onInstalled: eventSlot(() => {}),
     onStartup: eventSlot(() => {}),
@@ -62,6 +64,7 @@ assert.equal(storage.state.mode, "work", "当前位于工作时段时应进入�
 assert.ok(calls.notifications.length >= 1, "进入工作时段时应创建系统通知");
 assert.ok(calls.windows.length >= 1, "进入工作时段时应打开提醒弹窗");
 assert.ok(calls.messages.some(message => message.target === "offscreen"), "提醒时应独立发送声音播放消息");
+assert.ok(calls.messages.some(message => message.type === "ring" && message.durationMinutes === 5), "铃声默认应循环五分钟");
 
 function send(message) {
   return new Promise(resolve => {
@@ -75,6 +78,8 @@ const response = await send({ type: "testReminder" });
 assert.equal(response.ok, true, "测试提醒应成功返回");
 assert.ok(calls.notifications.length >= 2, "测试提醒应创建系统通知");
 assert.ok(calls.windows.length >= 2, "测试提醒应打开弹窗");
+await send({ type: "stopReminderSound" });
+assert.ok(calls.messages.some(message => message.type === "stop"), "点击知道了时应向声音页面发送停止消息");
 
 alarms.delete("break-bell-tick");
 storage.state.mode = "work";

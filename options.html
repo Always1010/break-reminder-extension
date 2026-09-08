@@ -37,8 +37,9 @@
   <section class="card">
     <h2>声音提醒</h2>
     <div class="grid">
-      <div class="field"><label for="sound">声音</label><select id="sound"><option value="alarm">闹钟式铃声</option><option value="soft">柔和铃声</option></select></div>
+      <div class="field"><label for="sound">声音</label><select id="sound"><option value="alarm">经典闹钟</option><option value="soft">柔和铃声</option><option value="digital-alarm">电子闹钟（CC0）</option><option value="siren-alarm">强力警报（CC0）</option><option value="custom">自定义声音</option></select></div>
       <div class="field"><label for="volume">音量（0 - 100）</label><input id="volume" type="number" min="0" max="100"></div>
+      <div class="field"><label for="soundDuration">铃声循环时长（分钟）</label><input id="soundDuration" type="number" min="0.5" max="30" step="0.5"></div>
     </div>
     <div class="field custom-sound"><label for="custom">自定义声音（可选，MP3/WAV/OGG）</label><input id="custom" type="file" accept="audio/*"></div>
     <button id="testReminder" class="add test-reminder" type="button">🔔 测试声音、通知和弹窗</button>

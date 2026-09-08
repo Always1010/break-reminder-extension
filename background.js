@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS = {
   breakMinutes: 10,
   volume: 0.8,
   sound: "alarm",
+  soundDurationMinutes: 5,
   customSound: "",
   windows: [{ start: "08:30", end: "22:00" }]
 };
@@ -101,9 +102,15 @@ async function ring(settings) {
     type: "ring",
     sound: settings.sound,
     customSound: settings.customSound,
-    volume: settings.volume
+    volume: settings.volume,
+    durationMinutes: settings.soundDurationMinutes
   });
   if (!response?.ok) throw new Error(response?.error || "声音播放失败");
+}
+
+async function stopSound() {
+  if (!await hasOffscreenDocument()) return;
+  await chrome.runtime.sendMessage({ target: "offscreen", type: "stop" });
 }
 
 async function showReminderWindow(title, message, kind, durationMinutes = 0) {
@@ -123,8 +130,8 @@ async function showReminderWindow(title, message, kind, durationMinutes = 0) {
   reminderWindowId = popup.id ?? null;
 }
 
-async function notify(title, message, { kind = "reminder", durationMinutes = 0 } = {}) {
-  const settings = await getSettings();
+async function notify(title, message, { kind = "reminder", durationMinutes = 0, settingsOverride = {} } = {}) {
+  const settings = { ...await getSettings(), ...settingsOverride };
   const results = await Promise.allSettled([
     chrome.notifications.create(`break-bell-${Date.now()}`, {
       type: "basic",
@@ -286,8 +293,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "testReminder") {
-    notify("测试提醒", "如果你看到弹窗并听到声音，提醒功能已经正常工作。", { kind: "test" })
+    notify("测试提醒", "如果你看到弹窗并听到声音，提醒功能已经正常工作。", {
+      kind: "test",
+      settingsOverride: {
+        sound: message.sound,
+        volume: message.volume,
+        soundDurationMinutes: message.soundDurationMinutes,
+        customSound: message.customSound
+      }
+    })
       .then(result => sendResponse({ ok: true, warning: result.errors.join("；") }))
+      .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  if (message.type === "stopReminderSound") {
+    stopSound()
+      .then(() => sendResponse({ ok: true }))
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
