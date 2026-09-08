@@ -176,6 +176,22 @@ $("add").addEventListener("click", () => {
   addPeriodAt(Math.min(1410, lastEnd + 90));
 });
 
+$("testReminder").addEventListener("click", async () => {
+  const button = $("testReminder");
+  button.disabled = true;
+  button.textContent = "正在测试…";
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "testReminder" });
+    if (!response?.ok) throw new Error(response?.error || "测试提醒失败");
+    announce(response.warning ? `测试已发出，但有部分异常：${response.warning}` : "测试提醒已发出。你应该同时看到弹窗、系统通知并听到声音。");
+  } catch (error) {
+    announce(`测试失败：${error?.message || error}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = "🔔 测试声音、通知和弹窗";
+  }
+});
+
 async function init() {
   const stored = await chrome.storage.local.get("settings");
   settings = { ...DEFAULTS, ...(stored.settings || {}) };
@@ -215,6 +231,7 @@ $("save").addEventListener("click", async () => {
   };
 
   await chrome.storage.local.set({ settings: nextSettings });
+  await chrome.runtime.sendMessage({ type: "settingsChanged" });
   settings = nextSettings;
   $("saved").textContent = "已保存";
   setTimeout(() => $("saved").textContent = "", 1800);

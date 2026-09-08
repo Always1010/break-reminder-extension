@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>休息提醒</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="reminder-page">
+  <main class="reminder-panel">
+    <div id="reminderIcon" class="reminder-icon" aria-hidden="true">🔔</div>
+    <p id="reminderKicker" class="reminder-kicker">休息提醒</p>
+    <h1 id="reminderTitle">该休息了</h1>
+    <p id="reminderMessage" class="reminder-message"></p>
+    <div id="reminderCountdown" class="reminder-countdown" hidden></div>
+    <button id="acknowledge" class="primary reminder-action" type="button">知道了</button>
+    <p class="reminder-note">关闭提示不会跳过或重置计时</p>
+  </main>
+  <script src="reminder.js"></script>
+</body>
+</html>

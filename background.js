@@ -1,3 +1,7 @@
+const TICK_ALARM = "break-bell-tick";
+const MAX_CONTINUOUS_TICK_GAP_MS = 5 * 60 * 1000;
+const NOTIFICATION_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
 const DEFAULT_SETTINGS = {
   workMinutes: 60,
   breakMinutes: 10,
@@ -7,79 +11,291 @@ const DEFAULT_SETTINGS = {
   windows: [{ start: "08:30", end: "22:00" }]
 };
 
-const blankState = () => ({ mode: "outside", windowIndex: -1, elapsedMs: 0, breakEndsAt: 0, lastTickAt: Date.now(), date: dateKey() });
-function dateKey(d = new Date()) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+let creatingOffscreen = null;
+let runningTick = null;
+let reminderWindowId = null;
+
+function dateKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
-function minutes(t) { const [h, m] = t.split(":").map(Number); return h * 60 + m; }
-function nowMinutes() { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
+
+function blankState() {
+  return {
+    mode: "outside",
+    windowIndex: -1,
+    elapsedMs: 0,
+    breakEndsAt: 0,
+    lastTickAt: Date.now(),
+    date: dateKey()
+  };
+}
+
+function minutes(time) {
+  const [hours, mins] = time.split(":").map(Number);
+  return hours * 60 + mins;
+}
+
+function nowMinutes() {
+  const date = new Date();
+  return date.getHours() * 60 + date.getMinutes();
+}
+
 function getWindow(settings, minute = nowMinutes()) {
-  return settings.windows.findIndex(w => minute >= minutes(w.start) && minute < minutes(w.end));
+  return settings.windows.findIndex(window => minute >= minutes(window.start) && minute < minutes(window.end));
 }
-async function settings() { const x = await chrome.storage.local.get("settings"); return { ...DEFAULT_SETTINGS, ...(x.settings || {}) }; }
-async function getState() { const x = await chrome.storage.local.get("state"); return x.state || blankState(); }
-async function putState(state) { state.lastTickAt = Date.now(); await chrome.storage.local.set({ state }); }
+
+async function getSettings() {
+  const stored = await chrome.storage.local.get("settings");
+  return { ...DEFAULT_SETTINGS, ...(stored.settings || {}) };
+}
+
+async function getState() {
+  const stored = await chrome.storage.local.get("state");
+  return stored.state || blankState();
+}
+
+async function putState(state) {
+  state.lastTickAt = Date.now();
+  await chrome.storage.local.set({ state });
+}
+
+async function recordDiagnostic(values) {
+  await chrome.storage.local.set({ diagnostics: { ...(await chrome.storage.local.get("diagnostics")).diagnostics, ...values } });
+}
+
+async function ensureTickAlarm() {
+  const existing = await chrome.alarms.get(TICK_ALARM);
+  if (!existing) await chrome.alarms.create(TICK_ALARM, { delayInMinutes: 1, periodInMinutes: 1 });
+  await recordDiagnostic({ alarmReadyAt: Date.now() });
+}
+
+async function hasOffscreenDocument() {
+  const offscreenUrl = chrome.runtime.getURL("offscreen.html");
+  if ("getContexts" in chrome.runtime) {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ["OFFSCREEN_DOCUMENT"],
+      documentUrls: [offscreenUrl]
+    });
+    return contexts.length > 0;
+  }
+  const clientsList = await clients.matchAll();
+  return clientsList.some(client => client.url === offscreenUrl);
+}
 
 async function ensureOffscreen() {
-  if (await chrome.offscreen.hasDocument?.()) return;
-  await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: ["AUDIO_PLAYBACK"], justification: "播放用户配置的休息提醒声音" });
+  if (await hasOffscreenDocument()) return;
+  if (!creatingOffscreen) {
+    creatingOffscreen = chrome.offscreen.createDocument({
+      url: "offscreen.html",
+      reasons: ["AUDIO_PLAYBACK"],
+      justification: "播放用户配置的休息提醒声音"
+    }).finally(() => { creatingOffscreen = null; });
+  }
+  await creatingOffscreen;
 }
-async function ring(s) {
-  try { await ensureOffscreen(); await chrome.runtime.sendMessage({ type: "ring", sound: s.sound, customSound: s.customSound, volume: s.volume }); } catch (e) { console.warn("sound unavailable", e); }
+
+async function ring(settings) {
+  await ensureOffscreen();
+  const response = await chrome.runtime.sendMessage({
+    target: "offscreen",
+    type: "ring",
+    sound: settings.sound,
+    customSound: settings.customSound,
+    volume: settings.volume
+  });
+  if (!response?.ok) throw new Error(response?.error || "声音播放失败");
 }
-async function notify(title, message, sound = true) {
-  await chrome.notifications.create(`break-${Date.now()}`, { type: "basic", iconUrl: "icon.svg", title, message, priority: 2 });
-  if (sound) await ring(await settings());
+
+async function showReminderWindow(title, message, kind, durationMinutes = 0) {
+  if (reminderWindowId !== null) {
+    try { await chrome.windows.remove(reminderWindowId); } catch { /* window was already closed */ }
+    reminderWindowId = null;
+  }
+
+  const query = new URLSearchParams({ title, message, kind, durationMinutes: String(durationMinutes) });
+  const popup = await chrome.windows.create({
+    url: `reminder.html?${query}`,
+    type: "popup",
+    focused: true,
+    width: 430,
+    height: 360
+  });
+  reminderWindowId = popup.id ?? null;
+}
+
+async function notify(title, message, { kind = "reminder", durationMinutes = 0 } = {}) {
+  const settings = await getSettings();
+  const results = await Promise.allSettled([
+    chrome.notifications.create(`break-bell-${Date.now()}`, {
+      type: "basic",
+      iconUrl: NOTIFICATION_ICON,
+      title,
+      message,
+      priority: 2
+    }),
+    ring(settings),
+    showReminderWindow(title, message, kind, durationMinutes)
+  ]);
+
+  const errors = results
+    .filter(result => result.status === "rejected")
+    .map(result => String(result.reason?.message || result.reason));
+  await recordDiagnostic({
+    lastReminderAt: Date.now(),
+    lastReminderTitle: title,
+    lastReminderError: errors.join("；")
+  });
+  if (errors.length === results.length) throw new Error(errors.join("；"));
+  return { errors };
 }
 
 async function tick() {
-  const s = await settings();
-  let st = await getState();
+  await ensureTickAlarm();
+  const settings = await getSettings();
+  let state = await getState();
   const today = dateKey();
-  if (st.date !== today) st = blankState();
-  const locked = (await chrome.idle.queryState(60)) === "locked";
+  if (state.date !== today) state = blankState();
+
   const now = Date.now();
-  const delta = Math.max(0, now - (st.lastTickAt || now));
+  const rawDelta = Math.max(0, now - (state.lastTickAt || now));
+  const locked = (await chrome.idle.queryState(60)) === "locked";
+
   if (locked) {
-    if (st.mode === "break") st.breakEndsAt += delta;
-    await putState(st);
+    if (state.mode === "break") state.breakEndsAt += rawDelta;
+    await putState(state);
     return;
   }
-  const wi = getWindow(s);
 
-  if (wi < 0) {
-    if (st.mode !== "outside") {
-      st = { ...blankState(), date: today };
-      await notify("休息时间到了", "当前工作时段结束，请休息、走动一下。", true);
-    } else st.lastTickAt = now;
-    await putState(st); return;
+  if (rawDelta > MAX_CONTINUOUS_TICK_GAP_MS && state.mode === "break") {
+    state.breakEndsAt += rawDelta;
   }
-  if (st.mode === "outside" || st.windowIndex !== wi) {
-    st = { ...blankState(), mode: "work", windowIndex: wi, date: today, lastTickAt: now };
-    await notify("开始工作时段", `现在是 ${s.windows[wi].start}，计时开始。`, true);
-    await putState(st); return;
-  }
-  if (st.mode === "break") {
-    if (now >= st.breakEndsAt) {
-      st.mode = "work"; st.elapsedMs = 0; st.breakEndsAt = 0;
-      await notify("休息结束", "休息时间结束，下一轮工作计时开始。", true);
+
+  const activeWindowIndex = getWindow(settings);
+  if (activeWindowIndex < 0) {
+    if (state.mode !== "outside") {
+      state = blankState();
+      await putState(state);
+      await notify("休息时间到了", "当前工作时段结束，请休息、走动一下。", { kind: "outside" });
+    } else {
+      await putState(state);
     }
-    await putState(st); return;
+    return;
   }
-  st.elapsedMs += delta;
-  if (st.elapsedMs >= s.workMinutes * 60000) {
-    st.mode = "break"; st.breakEndsAt = now + s.breakMinutes * 60000; st.elapsedMs = 0;
-    await notify("该休息了", `请离开座位活动 ${s.breakMinutes} 分钟。`, true);
+
+  if (state.mode === "outside" || state.windowIndex !== activeWindowIndex) {
+    state = {
+      ...blankState(),
+      mode: "work",
+      windowIndex: activeWindowIndex,
+      date: today
+    };
+    await putState(state);
+    await notify("开始工作时段", `现在是 ${settings.windows[activeWindowIndex].start}，新一轮计时开始。`, { kind: "work" });
+    return;
   }
-  await putState(st);
+
+  if (state.mode === "break") {
+    if (now >= state.breakEndsAt) {
+      state.mode = "work";
+      state.elapsedMs = 0;
+      state.breakEndsAt = 0;
+      await putState(state);
+      await notify("休息结束", "休息时间结束，下一轮工作计时开始。", { kind: "work" });
+    } else {
+      await putState(state);
+    }
+    return;
+  }
+
+  if (rawDelta <= MAX_CONTINUOUS_TICK_GAP_MS) state.elapsedMs += rawDelta;
+  if (state.elapsedMs >= settings.workMinutes * 60 * 1000) {
+    state.mode = "break";
+    state.breakEndsAt = now + settings.breakMinutes * 60 * 1000;
+    state.elapsedMs = 0;
+    await putState(state);
+    await notify("该休息了", `请离开座位活动 ${settings.breakMinutes} 分钟。`, {
+      kind: "break",
+      durationMinutes: settings.breakMinutes
+    });
+  } else {
+    await putState(state);
+  }
 }
 
-chrome.runtime.onInstalled.addListener(async () => { const x = await chrome.storage.local.get("settings"); if (!x.settings) await chrome.storage.local.set({ settings: DEFAULT_SETTINGS }); chrome.alarms.create("tick", { periodInMinutes: 1 }); tick(); });
-chrome.runtime.onStartup.addListener(() => { chrome.alarms.create("tick", { periodInMinutes: 1 }); tick(); });
-chrome.alarms.onAlarm.addListener(a => { if (a.name === "tick") tick(); });
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  (async () => {
-    if (msg.type === "getStatus") { await tick(); sendResponse({ settings: await settings(), state: await getState() }); }
-    if (msg.type === "reset") { const st = await getState(); st.mode = getWindow(await settings()) >= 0 ? "work" : "outside"; st.elapsedMs = 0; st.breakEndsAt = 0; st.windowIndex = getWindow(await settings()); await putState(st); sendResponse({ ok: true }); }
-  })(); return true;
+function runTick() {
+  if (!runningTick) runningTick = tick().catch(async error => {
+    console.error("Break Bell tick failed", error);
+    await recordDiagnostic({ lastTickError: String(error?.message || error), lastTickErrorAt: Date.now() });
+  }).finally(() => { runningTick = null; });
+  return runningTick;
+}
+
+async function initialize({ reset = false } = {}) {
+  const stored = await chrome.storage.local.get("settings");
+  if (!stored.settings) await chrome.storage.local.set({ settings: DEFAULT_SETTINGS });
+  if (reset) await chrome.storage.local.set({ state: blankState() });
+  await ensureTickAlarm();
+  await runTick();
+}
+
+chrome.runtime.onInstalled.addListener(() => { void initialize({ reset: true }); });
+chrome.runtime.onStartup.addListener(() => { void initialize({ reset: true }); });
+chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === TICK_ALARM) void runTick(); });
+chrome.windows.onRemoved.addListener(windowId => { if (windowId === reminderWindowId) reminderWindowId = null; });
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.target === "offscreen") return false;
+
+  if (message.type === "getStatus") {
+    (async () => {
+      await runTick();
+      sendResponse({
+        settings: await getSettings(),
+        state: await getState(),
+        diagnostics: (await chrome.storage.local.get("diagnostics")).diagnostics || {},
+        alarmReady: Boolean(await chrome.alarms.get(TICK_ALARM))
+      });
+    })();
+    return true;
+  }
+
+  if (message.type === "reset") {
+    (async () => {
+      const settings = await getSettings();
+      const windowIndex = getWindow(settings);
+      const state = {
+        ...blankState(),
+        mode: windowIndex >= 0 ? "work" : "outside",
+        windowIndex
+      };
+      await putState(state);
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message.type === "settingsChanged") {
+    (async () => {
+      const settings = await getSettings();
+      const windowIndex = getWindow(settings);
+      await putState({ ...blankState(), mode: windowIndex >= 0 ? "work" : "outside", windowIndex });
+      await ensureTickAlarm();
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message.type === "testReminder") {
+    notify("测试提醒", "如果你看到弹窗并听到声音，提醒功能已经正常工作。", { kind: "test" })
+      .then(result => sendResponse({ ok: true, warning: result.errors.join("；") }))
+      .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  return false;
+});
+
+void ensureTickAlarm().then(runTick).catch(error => {
+  console.error("Break Bell initialization failed", error);
+  void recordDiagnostic({ initializationError: String(error?.message || error), initializationErrorAt: Date.now() });
 });

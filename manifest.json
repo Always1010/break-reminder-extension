@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
   "name": "休息提醒 · Break Bell",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "在设定的工作时段提醒你规律休息。",
-  "permissions": ["alarms", "storage", "notifications", "idle", "offscreen"],
+  "minimum_chrome_version": "116",
+  "permissions": ["alarms", "storage", "notifications", "idle", "offscreen", "windows"],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_title": "休息提醒", "default_popup": "popup.html" },
-  "options_page": "options.html",
-  "icons": { "128": "icon.svg" }
+  "options_page": "options.html"
 }
