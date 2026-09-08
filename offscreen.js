@@ -1,6 +1,11 @@
 const SOUND_FILES = {
   "digital-alarm": "sounds/digital-alarm.wav",
-  "siren-alarm": "sounds/siren-alarm.wav"
+  "siren-alarm": "sounds/siren-alarm.wav",
+  "gentle-rain": "sounds/gentle-rain.ogg",
+  "gentle-wind": "sounds/gentle-wind.ogg",
+  "piano-loop": "sounds/piano-loop.mp3",
+  "calm-loop": "sounds/calm-loop.mp3",
+  "soft-sax": "sounds/soft-sax.ogg"
 };
 
 let context;
@@ -42,6 +47,15 @@ function playSynthPattern(message, gain) {
 }
 
 async function loadAudioBuffer(message) {
+  if (message.sound === "white-noise") {
+    const frameCount = context.sampleRate * 4;
+    const buffer = context.createBuffer(1, frameCount, context.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let index = 0; index < frameCount; index += 1) {
+      samples[index] = Math.random() * 2 - 1;
+    }
+    return buffer;
+  }
   const sourceUrl = message.sound === "custom"
     ? message.customSound
     : SOUND_FILES[message.sound] && chrome.runtime.getURL(SOUND_FILES[message.sound]);

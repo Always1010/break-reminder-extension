@@ -37,7 +37,7 @@
   <section class="card">
     <h2>声音提醒</h2>
     <div class="grid">
-      <div class="field"><label for="sound">声音</label><select id="sound"><option value="alarm">经典闹钟</option><option value="soft">柔和铃声</option><option value="digital-alarm">电子闹钟（CC0）</option><option value="siren-alarm">强力警报（CC0）</option><option value="custom">自定义声音</option></select></div>
+      <div class="field"><label for="sound">声音</label><select id="sound"><optgroup label="强提醒"><option value="alarm">经典闹钟</option><option value="digital-alarm">电子闹钟（CC0）</option><option value="siren-alarm">强力警报（CC0）</option></optgroup><optgroup label="柔和声音"><option value="soft">柔和铃声</option><option value="gentle-rain">轻柔雨声（CC0）</option><option value="gentle-wind">自然风声（CC0）</option><option value="white-noise">柔和白噪音</option><option value="piano-loop">舒缓钢琴（CC0）</option><option value="soft-sax">轻松萨克斯（CC0）</option><option value="calm-loop">宁静氛围音乐（CC0）</option></optgroup><option value="custom">自定义声音</option></select></div>
       <div class="field"><label for="volume">音量（0 - 100）</label><input id="volume" type="number" min="0" max="100"></div>
       <div class="field"><label for="soundDuration">铃声循环时长（分钟）</label><input id="soundDuration" type="number" min="0.5" max="30" step="0.5"></div>
     </div>
