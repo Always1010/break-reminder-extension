@@ -1,0 +1,4 @@
+const $ = id => document.getElementById(id);
+function fmt(ms) { const sec = Math.max(0, Math.ceil(ms / 1000)); return `${String(Math.floor(sec / 60)).padStart(2,"0")}:${String(sec % 60).padStart(2,"0")}`; }
+async function load() { const { settings: s, state: st } = await chrome.runtime.sendMessage({ type: "getStatus" }); const work = st.mode === "work"; $("status").textContent = work ? "工作计时中" : st.mode === "break" ? "休息倒计时" : "当前为休息时段"; $("timer").textContent = work ? fmt(s.workMinutes * 60000 - st.elapsedMs) : st.mode === "break" ? fmt(st.breakEndsAt - Date.now()) : "休息"; $("detail").textContent = work ? `每 ${s.workMinutes} 分钟提醒一次 · 休息 ${s.breakMinutes} 分钟` : "下一工作时段开始时会自动提醒"; }
+load(); setInterval(load, 1000); $("reset").onclick = async () => { await chrome.runtime.sendMessage({ type: "reset" }); load(); }; $("options").onclick = () => chrome.runtime.openOptionsPage();
