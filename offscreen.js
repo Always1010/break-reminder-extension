@@ -24,11 +24,6 @@ function stopPlayback() {
   activeNodes.clear();
 }
 
-function trackNode(node) {
-  activeNodes.add(node);
-  node.addEventListener("ended", () => activeNodes.delete(node), { once: true });
-}
-
 function createSynthLoopBuffer(sound) {
   const soft = sound === "soft";
   const loopSeconds = soft ? 1.8 : 1.2;
@@ -81,6 +76,23 @@ async function loadAudioBuffer(message) {
   return context.decodeAudioData(await response.arrayBuffer());
 }
 
+function startLoopingSource(audioBuffer, gain, version) {
+  const source = context.createBufferSource();
+  source.buffer = audioBuffer;
+  source.loop = true;
+  source.loopStart = 0;
+  source.loopEnd = audioBuffer.duration;
+  source.connect(gain);
+  activeNodes.add(source);
+  source.addEventListener("ended", () => {
+    activeNodes.delete(source);
+    // 若浏览器意外结束循环音源，仍处于本次提醒时以同一缓冲区重建，
+    // 保证铃声持续到设定时长。
+    if (version === playbackVersion) startLoopingSource(audioBuffer, gain, version);
+  }, { once: true });
+  source.start();
+}
+
 async function playReminder(message) {
   stopPlayback();
   const version = playbackVersion;
@@ -96,12 +108,7 @@ async function playReminder(message) {
   if (version !== playbackVersion) return;
   if (!audioBuffer) throw new Error("未找到可播放的铃声");
 
-  const source = context.createBufferSource();
-  source.buffer = audioBuffer;
-  source.loop = true;
-  source.connect(gain);
-  trackNode(source);
-  source.start();
+  startLoopingSource(audioBuffer, gain, version);
 
   stopTimer = setTimeout(stopPlayback, durationMinutes * 60 * 1000);
 }

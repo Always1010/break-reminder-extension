@@ -41,12 +41,23 @@ class FakeAudioContext {
       start() { this.started = true; },
       stop() {
         this.stopped = true;
-        listeners.get("ended")?.();
+        for (const listener of listeners.get("ended") || []) listener();
       },
-      addEventListener(type, listener) { listeners.set(type, listener); }
+      finish() {
+        for (const listener of listeners.get("ended") || []) listener();
+      },
+      addEventListener(type, listener) {
+        const typeListeners = listeners.get(type) || [];
+        typeListeners.push(listener);
+        listeners.set(type, typeListeners);
+      }
     };
     sources.push(source);
     return source;
+  }
+
+  async decodeAudioData() {
+    return this.createBuffer(1, this.sampleRate, this.sampleRate);
   }
 }
 
@@ -66,6 +77,7 @@ globalThis.chrome = {
     getURL(path) { return `chrome-extension://test/${path}`; }
   }
 };
+globalThis.fetch = async () => ({ ok: true, async arrayBuffer() { return new ArrayBuffer(8); } });
 
 await import(`../offscreen.js?test=${Date.now()}`);
 
@@ -100,8 +112,22 @@ assert.equal(sources[0].stopped, true, "开始新铃声前应停止旧铃声");
 assert.equal(sources[1].loop, true, "轻柔提示音也应持续循环");
 assert.equal(timers.at(-1).delay, 30 * 1000, "可配置的播放时长应生效");
 
+const calmResponse = await send({
+  target: "offscreen",
+  type: "ring",
+  sound: "calm-loop",
+  volume: 0.5,
+  durationMinutes: 5
+});
+
+assert.deepEqual(calmResponse, { ok: true }, "宁静氛围音乐应能开始播放");
+assert.equal(sources[2].loop, true, "宁静氛围音乐应使用循环音源");
+sources[2].finish();
+assert.equal(sources.length, 4, "循环音源意外结束时应自动重建");
+assert.equal(sources[3].loop, true, "重建后的宁静氛围音乐应继续循环");
+
 await send({ target: "offscreen", type: "stop" });
-assert.equal(sources[1].stopped, true, "收到停止消息后应立即停止循环音源");
+assert.equal(sources[3].stopped, true, "收到停止消息后应立即停止循环音源");
 
 globalThis.setTimeout = originalSetTimeout;
 globalThis.clearTimeout = originalClearTimeout;
