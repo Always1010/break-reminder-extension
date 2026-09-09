@@ -1,4 +1,5 @@
 const TICK_ALARM = "break-bell-tick";
+const WORK_DEADLINE_ALARM = "break-bell-work-deadline";
 const MAX_CONTINUOUS_TICK_GAP_MS = 5 * 60 * 1000;
 const NOTIFICATION_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
@@ -17,6 +18,7 @@ const DEFAULT_SETTINGS = {
 
 let creatingOffscreen = null;
 let runningTick = null;
+let pendingWorkDeadlineDue = false;
 let reminderWindowId = null;
 
 function dateKey(date = new Date()) {
@@ -29,6 +31,8 @@ function blankState() {
     windowIndex: -1,
     elapsedMs: 0,
     breakEndsAt: 0,
+    pausedFrom: null,
+    pausedAt: 0,
     lastTickAt: Date.now(),
     date: dateKey()
   };
@@ -71,6 +75,19 @@ async function ensureTickAlarm() {
   const existing = await chrome.alarms.get(TICK_ALARM);
   if (!existing) await chrome.alarms.create(TICK_ALARM, { delayInMinutes: 1, periodInMinutes: 1 });
   await recordDiagnostic({ alarmReadyAt: Date.now() });
+}
+
+async function clearWorkDeadline() {
+  await chrome.alarms.clear(WORK_DEADLINE_ALARM);
+}
+
+async function scheduleWorkDeadline(state, settings, now = Date.now()) {
+  if (state.mode !== "work") {
+    await clearWorkDeadline();
+    return;
+  }
+  const remainingMs = Math.max(0, settings.workMinutes * 60 * 1000 - state.elapsedMs);
+  await chrome.alarms.create(WORK_DEADLINE_ALARM, { when: now + remainingMs });
 }
 
 async function hasOffscreenDocument() {
@@ -162,12 +179,12 @@ async function notify(title, message, { kind = "reminder", durationMinutes = 0, 
   return { errors };
 }
 
-async function tick() {
+async function tick({ workDeadlineDue = false } = {}) {
   await ensureTickAlarm();
   const settings = await getSettings();
   let state = await getState();
   const today = dateKey();
-  if (state.date !== today) state = blankState();
+  if (state.date !== today && state.mode !== "paused") state = blankState();
 
   const now = Date.now();
   const rawDelta = Math.max(0, now - (state.lastTickAt || now));
@@ -176,6 +193,7 @@ async function tick() {
   if (locked) {
     if (state.mode === "break") state.breakEndsAt += rawDelta;
     await putState(state);
+    await scheduleWorkDeadline(state, settings, now);
     return;
   }
 
@@ -185,6 +203,7 @@ async function tick() {
 
   if (state.mode === "paused") {
     await putState(state);
+    await clearWorkDeadline();
     return;
   }
 
@@ -193,9 +212,11 @@ async function tick() {
     if (state.mode !== "outside") {
       state = blankState();
       await putState(state);
+      await clearWorkDeadline();
       await notify("休息时间到了", "当前工作时段结束，请休息、走动一下。", { kind: "outside" });
     } else {
       await putState(state);
+      await clearWorkDeadline();
     }
     return;
   }
@@ -208,6 +229,7 @@ async function tick() {
       date: today
     };
     await putState(state);
+    await scheduleWorkDeadline(state, settings, now);
     await notify("开始工作时段", `现在是 ${settings.windows[activeWindowIndex].start}，新一轮计时开始。`, { kind: "work" });
     return;
   }
@@ -218,33 +240,45 @@ async function tick() {
       state.elapsedMs = 0;
       state.breakEndsAt = 0;
       await putState(state);
+      await scheduleWorkDeadline(state, settings, now);
       await notify("休息结束", "休息时间结束，下一轮工作计时开始。", { kind: "work" });
     } else {
       await putState(state);
+      await clearWorkDeadline();
     }
     return;
   }
 
   if (rawDelta <= MAX_CONTINUOUS_TICK_GAP_MS) state.elapsedMs += rawDelta;
-  if (state.elapsedMs >= settings.workMinutes * 60 * 1000) {
+  if (workDeadlineDue || state.elapsedMs >= settings.workMinutes * 60 * 1000) {
     state.mode = "break";
     state.breakEndsAt = now + settings.breakMinutes * 60 * 1000;
     state.elapsedMs = 0;
     await putState(state);
+    await clearWorkDeadline();
     await notify("该休息了", `请离开座位活动 ${settings.breakMinutes} 分钟。`, {
       kind: "break",
       durationMinutes: settings.breakMinutes
     });
   } else {
     await putState(state);
+    await scheduleWorkDeadline(state, settings, now);
   }
 }
 
-function runTick() {
-  if (!runningTick) runningTick = tick().catch(async error => {
+function runTick(options) {
+  if (options?.workDeadlineDue) pendingWorkDeadlineDue = true;
+  if (!runningTick) {
+    const workDeadlineDue = pendingWorkDeadlineDue;
+    pendingWorkDeadlineDue = false;
+    runningTick = tick({ workDeadlineDue }).catch(async error => {
     console.error("Break Bell tick failed", error);
     await recordDiagnostic({ lastTickError: String(error?.message || error), lastTickErrorAt: Date.now() });
-  }).finally(() => { runningTick = null; });
+    }).finally(() => {
+      runningTick = null;
+      if (pendingWorkDeadlineDue) void runTick();
+    });
+  }
   return runningTick;
 }
 
@@ -258,7 +292,10 @@ async function initialize({ reset = false } = {}) {
 
 chrome.runtime.onInstalled.addListener(() => { void initialize({ reset: true }); });
 chrome.runtime.onStartup.addListener(() => { void initialize({ reset: true }); });
-chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === TICK_ALARM) void runTick(); });
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === TICK_ALARM) void runTick();
+  if (alarm.name === WORK_DEADLINE_ALARM) void runTick({ workDeadlineDue: true });
+});
 chrome.windows.onRemoved.addListener(windowId => { if (windowId === reminderWindowId) reminderWindowId = null; });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -287,6 +324,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         windowIndex
       };
       await putState(state);
+      await scheduleWorkDeadline(state, settings);
       sendResponse({ ok: true });
     })();
     return true;
@@ -298,24 +336,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const settings = await getSettings();
       let state = await getState();
       const windowIndex = getWindow(settings);
+      const now = Date.now();
 
       if (state.mode === "paused") {
-        const continueCurrentCycle = windowIndex >= 0 && windowIndex === state.windowIndex && state.date === dateKey();
-        state = {
-          ...state,
-          mode: windowIndex >= 0 ? "work" : "outside",
-          windowIndex,
-          elapsedMs: continueCurrentCycle ? state.elapsedMs : 0,
-          breakEndsAt: 0
-        };
-      } else if (state.mode === "work") {
-        state.mode = "paused";
+        const sameWindow = windowIndex >= 0 && windowIndex === state.windowIndex && state.date === dateKey();
+        const pauseDuration = Math.max(0, now - (state.pausedAt || now));
+        if (sameWindow && state.pausedFrom === "work") {
+          state = { ...state, mode: "work", pausedFrom: null, pausedAt: 0 };
+        } else if (sameWindow && state.pausedFrom === "break") {
+          state = {
+            ...state,
+            mode: "break",
+            breakEndsAt: state.breakEndsAt + pauseDuration,
+            pausedFrom: null,
+            pausedAt: 0
+          };
+        } else {
+          state = {
+            ...blankState(),
+            mode: windowIndex >= 0 ? "work" : "outside",
+            windowIndex
+          };
+        }
       } else {
-        sendResponse({ ok: false, error: "当前不在工作计时中，无法暂停。" });
-        return;
+        state = { ...state, mode: "paused", pausedFrom: state.mode, pausedAt: now };
       }
 
       await putState(state);
+      await scheduleWorkDeadline(state, settings, now);
       sendResponse({ ok: true, paused: state.mode === "paused" });
     })().catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
@@ -325,7 +373,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       const settings = await getSettings();
       const windowIndex = getWindow(settings);
-      await putState({ ...blankState(), mode: windowIndex >= 0 ? "work" : "outside", windowIndex });
+      const state = { ...blankState(), mode: windowIndex >= 0 ? "work" : "outside", windowIndex };
+      await putState(state);
+      await scheduleWorkDeadline(state, settings);
       await ensureTickAlarm();
       sendResponse({ ok: true });
     })();

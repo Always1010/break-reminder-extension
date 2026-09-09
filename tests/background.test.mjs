@@ -17,6 +17,7 @@ const storage = {
 const alarms = new Map();
 const calls = { notifications: [], windows: [], messages: [] };
 let messageListener;
+let alarmListener;
 let offscreenOpen = false;
 
 function eventSlot(setter) {
@@ -37,7 +38,8 @@ globalThis.chrome = {
   alarms: {
     async get(name) { return alarms.get(name); },
     async create(name, options) { alarms.set(name, { name, ...options }); },
-    onAlarm: eventSlot(() => {})
+    async clear(name) { return alarms.delete(name); },
+    onAlarm: eventSlot(listener => { alarmListener = listener; })
   },
   idle: { async queryState() { return "active"; } },
   offscreen: { async createDocument() { offscreenOpen = true; } },
@@ -63,6 +65,7 @@ await import(`../background.js?test=${Date.now()}`);
 await new Promise(resolve => setTimeout(resolve, 25));
 
 assert.ok(alarms.has("break-bell-tick"), "后台启动时应自动创建周期闹钟");
+assert.ok(alarms.has("break-bell-work-deadline"), "进入工作时段时应创建独立的截止闹钟");
 assert.equal(storage.state.mode, "work", "当前位于工作时段时应进入工作模式");
 assert.ok(calls.notifications.length >= 1, "进入工作时段时应创建系统通知");
 assert.ok(calls.windows.length >= 1, "进入工作时段时应打开提醒弹窗");
@@ -102,6 +105,20 @@ assert.deepEqual(resumeResponse, { ok: true, paused: false }, "暂停后的工�
 assert.equal(storage.state.mode, "work", "恢复后应回到工作计时");
 assert.equal(storage.state.elapsedMs, pausedElapsed, "恢复时应延续原有工作进度");
 
+storage.state = {
+  ...storage.state,
+  mode: "break",
+  breakEndsAt: Date.now() + 10 * 60 * 1000,
+  elapsedMs: 0,
+  lastTickAt: Date.now()
+};
+const breakPauseResponse = await send({ type: "togglePause" });
+assert.deepEqual(breakPauseResponse, { ok: true, paused: true }, "休息倒计时也应能暂停整个功能");
+assert.equal(storage.state.pausedFrom, "break", "暂停时应保存原本的休息状态");
+const breakResumeResponse = await send({ type: "togglePause" });
+assert.deepEqual(breakResumeResponse, { ok: true, paused: false }, "休息倒计时也应能恢复");
+assert.equal(storage.state.mode, "break", "恢复后应回到休息倒计时");
+
 const countsBeforeSilence = {
   notifications: calls.notifications.length,
   windows: calls.windows.length,
@@ -117,6 +134,21 @@ assert.equal(silentResponse.ok, true, "全部提醒方式关闭时测试应正�
 assert.equal(calls.notifications.length, countsBeforeSilence.notifications, "关闭系统通知后不应创建通知");
 assert.equal(calls.windows.length, countsBeforeSilence.windows, "关闭浏览器弹窗后不应打开窗口");
 assert.equal(calls.messages.length, countsBeforeSilence.messages, "关闭声音后不应发送播放消息");
+
+storage.state = {
+  ...storage.state,
+  mode: "work",
+  windowIndex: 0,
+  elapsedMs: 0,
+  breakEndsAt: 0,
+  lastTickAt: Date.now()
+};
+await send({ type: "getStatus" });
+assert.ok(alarms.has("break-bell-work-deadline"), "工作中应持续保有截止闹钟");
+alarmListener({ name: "break-bell-work-deadline" });
+await new Promise(resolve => setTimeout(resolve, 25));
+assert.equal(storage.state.mode, "break", "截止闹钟触发后应直接进入休息倒计时");
+assert.ok(calls.notifications.some(call => call.options.title === "该休息了"), "截止闹钟应发出休息通知");
 
 alarms.delete("break-bell-tick");
 storage.state.mode = "work";
