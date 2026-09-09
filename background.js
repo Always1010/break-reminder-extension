@@ -9,6 +9,9 @@ const DEFAULT_SETTINGS = {
   sound: "alarm",
   soundDurationMinutes: 5,
   customSound: "",
+  soundEnabled: true,
+  systemNotificationEnabled: true,
+  popupEnabled: true,
   windows: [{ start: "08:30", end: "22:00" }]
 };
 
@@ -132,17 +135,20 @@ async function showReminderWindow(title, message, kind, durationMinutes = 0) {
 
 async function notify(title, message, { kind = "reminder", durationMinutes = 0, settingsOverride = {} } = {}) {
   const settings = { ...await getSettings(), ...settingsOverride };
-  const results = await Promise.allSettled([
-    chrome.notifications.create(`break-bell-${Date.now()}`, {
+  const channels = [];
+  if (settings.systemNotificationEnabled) {
+    channels.push(chrome.notifications.create(`break-bell-${Date.now()}`, {
       type: "basic",
       iconUrl: NOTIFICATION_ICON,
       title,
       message,
       priority: 2
-    }),
-    ring(settings),
-    showReminderWindow(title, message, kind, durationMinutes)
-  ]);
+    }));
+  }
+  if (settings.soundEnabled) channels.push(ring(settings));
+  if (settings.popupEnabled) channels.push(showReminderWindow(title, message, kind, durationMinutes));
+
+  const results = await Promise.allSettled(channels);
 
   const errors = results
     .filter(result => result.status === "rejected")
@@ -152,7 +158,7 @@ async function notify(title, message, { kind = "reminder", durationMinutes = 0, 
     lastReminderTitle: title,
     lastReminderError: errors.join("；")
   });
-  if (errors.length === results.length) throw new Error(errors.join("；"));
+  if (results.length && errors.length === results.length) throw new Error(errors.join("；"));
   return { errors };
 }
 
@@ -175,6 +181,11 @@ async function tick() {
 
   if (rawDelta > MAX_CONTINUOUS_TICK_GAP_MS && state.mode === "break") {
     state.breakEndsAt += rawDelta;
+  }
+
+  if (state.mode === "paused") {
+    await putState(state);
+    return;
   }
 
   const activeWindowIndex = getWindow(settings);
@@ -281,6 +292,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "togglePause") {
+    (async () => {
+      await runTick();
+      const settings = await getSettings();
+      let state = await getState();
+      const windowIndex = getWindow(settings);
+
+      if (state.mode === "paused") {
+        const continueCurrentCycle = windowIndex >= 0 && windowIndex === state.windowIndex && state.date === dateKey();
+        state = {
+          ...state,
+          mode: windowIndex >= 0 ? "work" : "outside",
+          windowIndex,
+          elapsedMs: continueCurrentCycle ? state.elapsedMs : 0,
+          breakEndsAt: 0
+        };
+      } else if (state.mode === "work") {
+        state.mode = "paused";
+      } else {
+        sendResponse({ ok: false, error: "当前不在工作计时中，无法暂停。" });
+        return;
+      }
+
+      await putState(state);
+      sendResponse({ ok: true, paused: state.mode === "paused" });
+    })().catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
   if (message.type === "settingsChanged") {
     (async () => {
       const settings = await getSettings();
@@ -293,14 +333,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "testReminder") {
+    const settingsOverride = Object.fromEntries(Object.entries({
+      sound: message.sound,
+      volume: message.volume,
+      soundDurationMinutes: message.soundDurationMinutes,
+      customSound: message.customSound,
+      soundEnabled: message.soundEnabled,
+      systemNotificationEnabled: message.systemNotificationEnabled,
+      popupEnabled: message.popupEnabled
+    }).filter(([, value]) => value !== undefined));
     notify("测试提醒", "如果你看到弹窗并听到声音，提醒功能已经正常工作。", {
       kind: "test",
-      settingsOverride: {
-        sound: message.sound,
-        volume: message.volume,
-        soundDurationMinutes: message.soundDurationMinutes,
-        customSound: message.customSound
-      }
+      settingsOverride
     })
       .then(result => sendResponse({ ok: true, warning: result.errors.join("；") }))
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));

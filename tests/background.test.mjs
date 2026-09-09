@@ -8,6 +8,9 @@ const storage = {
     sound: "alarm",
     soundDurationMinutes: 5,
     customSound: "",
+    soundEnabled: true,
+    systemNotificationEnabled: true,
+    popupEnabled: true,
     windows: [{ start: "00:00", end: "24:00" }]
   }
 };
@@ -80,6 +83,40 @@ assert.ok(calls.notifications.length >= 2, "测试提醒应创建系统通知");
 assert.ok(calls.windows.length >= 2, "测试提醒应打开弹窗");
 await send({ type: "stopReminderSound" });
 assert.ok(calls.messages.some(message => message.type === "stop"), "点击知道了时应向声音页面发送停止消息");
+
+storage.state = {
+  ...storage.state,
+  mode: "work",
+  windowIndex: 0,
+  elapsedMs: 15 * 60 * 1000,
+  lastTickAt: Date.now()
+};
+const pauseResponse = await send({ type: "togglePause" });
+assert.deepEqual(pauseResponse, { ok: true, paused: true }, "工作计时应能暂停");
+const pausedElapsed = storage.state.elapsedMs;
+await send({ type: "getStatus" });
+assert.equal(storage.state.mode, "paused", "暂停时应保持暂停状态");
+assert.equal(storage.state.elapsedMs, pausedElapsed, "暂停时不应累计工作时长");
+const resumeResponse = await send({ type: "togglePause" });
+assert.deepEqual(resumeResponse, { ok: true, paused: false }, "暂停后的工作计时应能继续");
+assert.equal(storage.state.mode, "work", "恢复后应回到工作计时");
+assert.equal(storage.state.elapsedMs, pausedElapsed, "恢复时应延续原有工作进度");
+
+const countsBeforeSilence = {
+  notifications: calls.notifications.length,
+  windows: calls.windows.length,
+  messages: calls.messages.length
+};
+const silentResponse = await send({
+  type: "testReminder",
+  soundEnabled: false,
+  systemNotificationEnabled: false,
+  popupEnabled: false
+});
+assert.equal(silentResponse.ok, true, "全部提醒方式关闭时测试应正常完成");
+assert.equal(calls.notifications.length, countsBeforeSilence.notifications, "关闭系统通知后不应创建通知");
+assert.equal(calls.windows.length, countsBeforeSilence.windows, "关闭浏览器弹窗后不应打开窗口");
+assert.equal(calls.messages.length, countsBeforeSilence.messages, "关闭声音后不应发送播放消息");
 
 alarms.delete("break-bell-tick");
 storage.state.mode = "work";

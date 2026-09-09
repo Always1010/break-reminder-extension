@@ -5,6 +5,9 @@ const DEFAULTS = {
   sound: "alarm",
   soundDurationMinutes: 5,
   customSound: "",
+  soundEnabled: true,
+  systemNotificationEnabled: true,
+  popupEnabled: true,
   windows: [{ start: "08:30", end: "22:00" }]
 };
 
@@ -197,10 +200,14 @@ $("testReminder").addEventListener("click", async () => {
       sound: $("sound").value,
       volume: Math.min(1, Math.max(0, Number($("volume").value) / 100)),
       soundDurationMinutes: Math.min(30, Math.max(0.5, Number($("soundDuration").value) || 5)),
-      customSound
+      customSound,
+      soundEnabled: $("soundEnabled").checked,
+      systemNotificationEnabled: $("systemNotificationEnabled").checked,
+      popupEnabled: $("popupEnabled").checked
     });
     if (!response?.ok) throw new Error(response?.error || "测试提醒失败");
-    announce(response.warning ? `测试已发出，但有部分异常：${response.warning}` : "测试提醒已发出。你应该同时看到弹窗、系统通知并听到声音。");
+    const enabledCount = [$("soundEnabled").checked, $("systemNotificationEnabled").checked, $("popupEnabled").checked].filter(Boolean).length;
+    announce(response.warning ? `测试已发出，但有部分异常：${response.warning}` : enabledCount ? "测试提醒已发出。仅已启用的提醒方式会生效。" : "提醒方式均未开启，本次测试不会产生提醒。");
   } catch (error) {
     announce(`测试失败：${error?.message || error}`);
   } finally {
@@ -223,6 +230,9 @@ async function init() {
   $("volume").value = Math.round(settings.volume * 100);
   $("sound").value = settings.sound;
   $("soundDuration").value = settings.soundDurationMinutes;
+  $("soundEnabled").checked = settings.soundEnabled;
+  $("systemNotificationEnabled").checked = settings.systemNotificationEnabled;
+  $("popupEnabled").checked = settings.popupEnabled;
   renderTimeline();
 }
 
@@ -250,6 +260,9 @@ $("save").addEventListener("click", async () => {
     sound: $("sound").value,
     soundDurationMinutes: Math.min(30, Math.max(0.5, Number($("soundDuration").value) || 5)),
     customSound,
+    soundEnabled: $("soundEnabled").checked,
+    systemNotificationEnabled: $("systemNotificationEnabled").checked,
+    popupEnabled: $("popupEnabled").checked,
     windows: normalizePeriods(periods).map(period => ({ start: toTime(period.start), end: toTime(Math.min(1439, period.end)) }))
   };
 
