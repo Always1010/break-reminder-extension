@@ -76,19 +76,22 @@ async function loadAudioBuffer(message) {
   return context.decodeAudioData(await response.arrayBuffer());
 }
 
-function startLoopingSource(audioBuffer, gain, version) {
+function startRepeatingSource(audioBuffer, gain, version, { chainOnEnded = false } = {}) {
   const source = context.createBufferSource();
   source.buffer = audioBuffer;
-  source.loop = true;
-  source.loopStart = 0;
-  source.loopEnd = audioBuffer.duration;
+  source.loop = !chainOnEnded;
+  if (source.loop) {
+    source.loopStart = 0;
+    source.loopEnd = audioBuffer.duration;
+  }
   source.connect(gain);
   activeNodes.add(source);
   source.addEventListener("ended", () => {
     activeNodes.delete(source);
-    // 若浏览器意外结束循环音源，仍处于本次提醒时以同一缓冲区重建，
-    // 保证铃声持续到设定时长。
-    if (version === playbackVersion) startLoopingSource(audioBuffer, gain, version);
+    // 对有兼容性问题的音频，使用自然结束后的链式重播替代底层 loop。
+    if (chainOnEnded && version === playbackVersion) {
+      startRepeatingSource(audioBuffer, gain, version, { chainOnEnded });
+    }
   }, { once: true });
   source.start();
 }
@@ -108,7 +111,10 @@ async function playReminder(message) {
   if (version !== playbackVersion) return;
   if (!audioBuffer) throw new Error("未找到可播放的铃声");
 
-  startLoopingSource(audioBuffer, gain, version);
+  startRepeatingSource(audioBuffer, gain, version, {
+    // Relaxing.mp3 带有 gapless 元数据；部分 Chromium 环境不会可靠地循环它。
+    chainOnEnded: message.sound === "calm-loop"
+  });
 
   stopTimer = setTimeout(stopPlayback, durationMinutes * 60 * 1000);
 }

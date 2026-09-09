@@ -121,10 +121,10 @@ const calmResponse = await send({
 });
 
 assert.deepEqual(calmResponse, { ok: true }, "宁静氛围音乐应能开始播放");
-assert.equal(sources[2].loop, true, "宁静氛围音乐应使用循环音源");
+assert.equal(sources[2].loop, false, "宁静氛围音乐应绕过不可靠的底层循环");
 sources[2].finish();
 assert.equal(sources.length, 4, "循环音源意外结束时应自动重建");
-assert.equal(sources[3].loop, true, "重建后的宁静氛围音乐应继续循环");
+assert.equal(sources[3].loop, false, "重建后的宁静氛围音乐应继续链式播放");
 
 await send({ target: "offscreen", type: "stop" });
 assert.equal(sources[3].stopped, true, "收到停止消息后应立即停止循环音源");
