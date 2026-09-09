@@ -10,9 +10,15 @@ document.getElementById("reminderTitle").textContent = title;
 document.getElementById("reminderMessage").textContent = message;
 document.getElementById("reminderIcon").textContent = icons[kind] || icons.reminder;
 document.getElementById("reminderKicker").textContent = kind === "break" ? "休息倒计时已开始" : "休息提醒";
-document.getElementById("acknowledge").addEventListener("click", async () => {
-  try { await chrome.runtime.sendMessage({ type: "stopReminderSound" }); }
-  finally { window.close(); }
+document.getElementById("acknowledge").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const currentWindow = await chrome.windows.getCurrent();
+    await chrome.runtime.sendMessage({ type: "dismissReminder", windowId: currentWindow.id });
+  } catch {
+    button.disabled = false;
+  }
 });
 
 if (durationMinutes > 0) {

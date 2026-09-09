@@ -15,7 +15,7 @@ const storage = {
   }
 };
 const alarms = new Map();
-const calls = { notifications: [], windows: [], messages: [] };
+const calls = { notifications: [], windows: [], messages: [], removedWindows: [] };
 let messageListener;
 let alarmListener;
 let offscreenOpen = false;
@@ -48,7 +48,7 @@ globalThis.chrome = {
   },
   windows: {
     async create(options) { calls.windows.push(options); return { id: calls.windows.length }; },
-    async remove() {},
+    async remove(id) { calls.removedWindows.push(id); },
     onRemoved: eventSlot(() => {})
   },
   runtime: {
@@ -84,8 +84,14 @@ const response = await send({ type: "testReminder" });
 assert.equal(response.ok, true, "测试提醒应成功返回");
 assert.ok(calls.notifications.length >= 2, "测试提醒应创建系统通知");
 assert.ok(calls.windows.length >= 2, "测试提醒应打开弹窗");
+assert.equal(storage.soundStatus.title, "测试提醒", "播放声音时应记录当前声音状态");
 await send({ type: "stopReminderSound" });
 assert.ok(calls.messages.some(message => message.type === "stop"), "点击知道了时应向声音页面发送停止消息");
+assert.equal(storage.soundStatus, null, "停止声音后应清除当前声音状态");
+
+const dismissResponse = await send({ type: "dismissReminder", windowId: 99 });
+assert.equal(dismissResponse.ok, true, "确认提醒应成功关闭窗口");
+assert.equal(calls.removedWindows.at(-1), 99, "确认提醒应由后台移除完整提醒窗口");
 
 storage.state = {
   ...storage.state,
@@ -145,10 +151,13 @@ storage.state = {
 };
 await send({ type: "getStatus" });
 assert.ok(alarms.has("break-bell-work-deadline"), "工作中应持续保有截止闹钟");
+storage.soundStatus = { title: "上一轮提醒", kind: "work", endsAt: Date.now() + 60 * 1000 };
+const stopsBeforeDeadline = calls.messages.filter(message => message.type === "stop").length;
 alarmListener({ name: "break-bell-work-deadline" });
 await new Promise(resolve => setTimeout(resolve, 25));
 assert.equal(storage.state.mode, "break", "截止闹钟触发后应直接进入休息倒计时");
 assert.ok(calls.notifications.some(call => call.options.title === "该休息了"), "截止闹钟应发出休息通知");
+assert.ok(calls.messages.filter(message => message.type === "stop").length > stopsBeforeDeadline, "状态切换前应停止上一周期的声音");
 
 alarms.delete("break-bell-tick");
 storage.state.mode = "work";

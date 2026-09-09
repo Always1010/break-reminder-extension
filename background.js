@@ -115,7 +115,7 @@ async function ensureOffscreen() {
   await creatingOffscreen;
 }
 
-async function ring(settings) {
+async function ring(settings, soundStatus) {
   await ensureOffscreen();
   const response = await chrome.runtime.sendMessage({
     target: "offscreen",
@@ -126,11 +126,22 @@ async function ring(settings) {
     durationMinutes: settings.soundDurationMinutes
   });
   if (!response?.ok) throw new Error(response?.error || "声音播放失败");
+  const durationMinutes = Math.min(30, Math.max(0.5, Number(settings.soundDurationMinutes) || 5));
+  await chrome.storage.local.set({
+    soundStatus: { ...soundStatus, endsAt: Date.now() + durationMinutes * 60 * 1000 }
+  });
 }
 
 async function stopSound() {
-  if (!await hasOffscreenDocument()) return;
-  await chrome.runtime.sendMessage({ target: "offscreen", type: "stop" });
+  if (await hasOffscreenDocument()) {
+    await chrome.runtime.sendMessage({ target: "offscreen", type: "stop" });
+  }
+  await chrome.storage.local.set({ soundStatus: null });
+}
+
+async function getSoundStatus() {
+  const stored = await chrome.storage.local.get("soundStatus");
+  return stored.soundStatus?.endsAt > Date.now() ? stored.soundStatus : null;
 }
 
 async function showReminderWindow(title, message, kind, durationMinutes = 0) {
@@ -152,6 +163,7 @@ async function showReminderWindow(title, message, kind, durationMinutes = 0) {
 
 async function notify(title, message, { kind = "reminder", durationMinutes = 0, settingsOverride = {} } = {}) {
   const settings = { ...await getSettings(), ...settingsOverride };
+  if (kind !== "test") await stopSound();
   const channels = [];
   if (settings.systemNotificationEnabled) {
     channels.push(chrome.notifications.create(`break-bell-${Date.now()}`, {
@@ -162,7 +174,7 @@ async function notify(title, message, { kind = "reminder", durationMinutes = 0, 
       priority: 2
     }));
   }
-  if (settings.soundEnabled) channels.push(ring(settings));
+  if (settings.soundEnabled) channels.push(ring(settings, { title, kind }));
   if (settings.popupEnabled) channels.push(showReminderWindow(title, message, kind, durationMinutes));
 
   const results = await Promise.allSettled(channels);
@@ -307,6 +319,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({
         settings: await getSettings(),
         state: await getState(),
+        soundStatus: await getSoundStatus(),
         diagnostics: (await chrome.storage.local.get("diagnostics")).diagnostics || {},
         alarmReady: Boolean(await chrome.alarms.get(TICK_ALARM))
       });
@@ -316,6 +329,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "reset") {
     (async () => {
+      await stopSound();
       const settings = await getSettings();
       const windowIndex = getWindow(settings);
       const state = {
@@ -360,6 +374,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
       } else {
         state = { ...state, mode: "paused", pausedFrom: state.mode, pausedAt: now };
+        await stopSound();
       }
 
       await putState(state);
@@ -371,6 +386,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "settingsChanged") {
     (async () => {
+      await stopSound();
       const settings = await getSettings();
       const windowIndex = getWindow(settings);
       const state = { ...blankState(), mode: windowIndex >= 0 ? "work" : "outside", windowIndex };
@@ -405,6 +421,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     stopSound()
       .then(() => sendResponse({ ok: true }))
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  if (message.type === "dismissReminder") {
+    (async () => {
+      await stopSound();
+      const windowId = Number.isInteger(message.windowId) ? message.windowId : reminderWindowId;
+      reminderWindowId = null;
+      if (windowId !== null && windowId !== undefined) {
+        try { await chrome.windows.remove(windowId); } catch { /* window was already closed */ }
+      }
+      sendResponse({ ok: true });
+    })().catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
