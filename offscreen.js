@@ -9,15 +9,14 @@ const SOUND_FILES = {
 };
 
 let context;
-let loopTimer;
 let stopTimer;
+let playbackVersion = 0;
 const activeNodes = new Set();
 
 function stopPlayback() {
-  clearInterval(loopTimer);
   clearTimeout(stopTimer);
-  loopTimer = undefined;
   stopTimer = undefined;
+  playbackVersion += 1;
   for (const node of activeNodes) {
     try { node.stop(); } catch { /* node already ended */ }
     try { node.disconnect(); } catch { /* node already disconnected */ }
@@ -30,23 +29,40 @@ function trackNode(node) {
   node.addEventListener("ended", () => activeNodes.delete(node), { once: true });
 }
 
-function playSynthPattern(message, gain) {
-  const startsAt = context.currentTime + 0.03;
-  const soft = message.sound === "soft";
-  const offsets = soft ? [0, 0.45] : [0, 0.24, 0.48, 0.72];
+function createSynthLoopBuffer(sound) {
+  const soft = sound === "soft";
+  const loopSeconds = soft ? 1.8 : 1.2;
+  const frameCount = Math.ceil(context.sampleRate * loopSeconds);
+  const buffer = context.createBuffer(1, frameCount, context.sampleRate);
+  const samples = buffer.getChannelData(0);
+  const notes = soft
+    ? [{ at: 0, length: 0.3, frequency: 520 }, { at: 0.45, length: 0.3, frequency: 660 }]
+    : [
+      { at: 0, length: 0.17, frequency: 880 },
+      { at: 0.24, length: 0.17, frequency: 660 },
+      { at: 0.48, length: 0.17, frequency: 880 },
+      { at: 0.72, length: 0.17, frequency: 660 }
+    ];
 
-  offsets.forEach((offset, index) => {
-    const oscillator = context.createOscillator();
-    oscillator.type = soft ? "sine" : "square";
-    oscillator.frequency.value = soft ? 520 : (index % 2 ? 660 : 880);
-    oscillator.connect(gain);
-    trackNode(oscillator);
-    oscillator.start(startsAt + offset);
-    oscillator.stop(startsAt + offset + (soft ? 0.3 : 0.17));
-  });
+  for (const note of notes) {
+    const start = Math.floor(note.at * context.sampleRate);
+    const end = Math.min(frameCount, Math.ceil((note.at + note.length) * context.sampleRate));
+    for (let frame = start; frame < end; frame += 1) {
+      const elapsed = (frame - start) / context.sampleRate;
+      const remaining = (end - frame) / context.sampleRate;
+      const envelope = Math.min(1, elapsed / 0.015, remaining / 0.06);
+      const phase = Math.PI * 2 * note.frequency * elapsed;
+      const wave = soft ? Math.sin(phase) : (Math.sin(phase) >= 0 ? 1 : -1);
+      samples[frame] += wave * envelope * (soft ? 0.28 : 0.2);
+    }
+  }
+  return buffer;
 }
 
 async function loadAudioBuffer(message) {
+  if (message.sound === "alarm" || message.sound === "soft") {
+    return createSynthLoopBuffer(message.sound);
+  }
   if (message.sound === "white-noise") {
     const frameCount = context.sampleRate * 4;
     const buffer = context.createBuffer(1, frameCount, context.sampleRate);
@@ -67,6 +83,7 @@ async function loadAudioBuffer(message) {
 
 async function playReminder(message) {
   stopPlayback();
+  const version = playbackVersion;
   context ||= new AudioContext();
   if (context.state === "suspended") await context.resume();
 
@@ -76,17 +93,15 @@ async function playReminder(message) {
   gain.connect(context.destination);
 
   const audioBuffer = await loadAudioBuffer(message);
-  if (audioBuffer) {
-    const source = context.createBufferSource();
-    source.buffer = audioBuffer;
-    source.loop = true;
-    source.connect(gain);
-    trackNode(source);
-    source.start();
-  } else {
-    playSynthPattern(message, gain);
-    loopTimer = setInterval(() => playSynthPattern(message, gain), message.sound === "soft" ? 1800 : 1500);
-  }
+  if (version !== playbackVersion) return;
+  if (!audioBuffer) throw new Error("未找到可播放的铃声");
+
+  const source = context.createBufferSource();
+  source.buffer = audioBuffer;
+  source.loop = true;
+  source.connect(gain);
+  trackNode(source);
+  source.start();
 
   stopTimer = setTimeout(stopPlayback, durationMinutes * 60 * 1000);
 }
