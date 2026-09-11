@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS = {
   soundEnabled: true,
   systemNotificationEnabled: true,
   popupEnabled: true,
+  displaySleepAllowed: true,
   windows: [{ start: "08:30", end: "22:00" }]
 };
 
@@ -55,6 +56,14 @@ function getWindow(settings, minute = nowMinutes()) {
 async function getSettings() {
   const stored = await chrome.storage.local.get("settings");
   return { ...DEFAULT_SETTINGS, ...(stored.settings || {}) };
+}
+
+function syncDisplaySleep(settings) {
+  if (settings.displaySleepAllowed) {
+    chrome.power.releaseKeepAwake();
+  } else {
+    chrome.power.requestKeepAwake("display");
+  }
 }
 
 async function getState() {
@@ -297,6 +306,7 @@ function runTick(options) {
 async function initialize({ reset = false } = {}) {
   const stored = await chrome.storage.local.get("settings");
   if (!stored.settings) await chrome.storage.local.set({ settings: DEFAULT_SETTINGS });
+  syncDisplaySleep(await getSettings());
   if (reset) await chrome.storage.local.set({ state: blankState() });
   await ensureTickAlarm();
   await runTick();
@@ -388,6 +398,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       await stopSound();
       const settings = await getSettings();
+      syncDisplaySleep(settings);
       const windowIndex = getWindow(settings);
       const state = { ...blankState(), mode: windowIndex >= 0 ? "work" : "outside", windowIndex };
       await putState(state);
@@ -395,6 +406,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await ensureTickAlarm();
       sendResponse({ ok: true });
     })();
+    return true;
+  }
+
+  if (message.type === "setDisplaySleepAllowed") {
+    (async () => {
+      const settings = {
+        ...await getSettings(),
+        displaySleepAllowed: Boolean(message.displaySleepAllowed)
+      };
+      await chrome.storage.local.set({ settings });
+      syncDisplaySleep(settings);
+      sendResponse({ ok: true, displaySleepAllowed: settings.displaySleepAllowed });
+    })().catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
@@ -443,4 +467,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 void ensureTickAlarm().then(runTick).catch(error => {
   console.error("Break Bell initialization failed", error);
   void recordDiagnostic({ initializationError: String(error?.message || error), initializationErrorAt: Date.now() });
+});
+
+void getSettings().then(syncDisplaySleep).catch(error => {
+  console.error("Break Bell display power initialization failed", error);
+  void recordDiagnostic({ displayPowerInitializationError: String(error?.message || error), displayPowerInitializationErrorAt: Date.now() });
 });

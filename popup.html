@@ -1,1 +1,20 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="ui.css"></head><body class="popup"><div class="brand"><span class="logo">◒</span><div><h1>休息提醒</h1><small>让身体跟上节奏</small></div></div><div id="status" class="status">正在读取…</div><div id="timer" class="timer">--:--</div><p id="detail" class="muted"></p><div id="soundControl" class="sound-control" hidden><span id="soundText"></span><button id="stopSound" class="sound-stop" type="button">停止当前声音</button></div><button id="pause" class="primary">暂停功能</button><button id="reset" class="secondary">重置当前计时</button><button id="options" class="link">打开设置</button><script src="popup.js"></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="popup">
+  <div class="brand"><span class="logo">◒</span><div><h1>休息提醒</h1><small>让身体跟上节奏</small></div></div>
+  <div id="status" class="status">正在读取…</div>
+  <div id="timer" class="timer">--:--</div>
+  <p id="detail" class="muted"></p>
+  <label class="display-sleep-control"><input id="displaySleepAllowed" type="checkbox"> <span>允许屏幕自动熄灭</span></label>
+  <p class="display-sleep-help">关闭后，浏览器运行期间将保持屏幕常亮。</p>
+  <div id="soundControl" class="sound-control" hidden><span id="soundText"></span><button id="stopSound" class="sound-stop" type="button">停止当前声音</button></div>
+  <button id="pause" class="primary">暂停功能</button>
+  <button id="reset" class="secondary">重置当前计时</button>
+  <button id="options" class="link">打开设置</button>
+  <script src="popup.js"></script>
+</body>
+</html>

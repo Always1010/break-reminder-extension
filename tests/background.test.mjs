@@ -15,7 +15,7 @@ const storage = {
   }
 };
 const alarms = new Map();
-const calls = { notifications: [], windows: [], messages: [], removedWindows: [] };
+const calls = { notifications: [], windows: [], messages: [], removedWindows: [], keepAwakeRequests: 0, keepAwakeReleases: 0 };
 let messageListener;
 let alarmListener;
 let offscreenOpen = false;
@@ -42,6 +42,10 @@ globalThis.chrome = {
     onAlarm: eventSlot(listener => { alarmListener = listener; })
   },
   idle: { async queryState() { return "active"; } },
+  power: {
+    requestKeepAwake(level) { assert.equal(level, "display", "仅应阻止显示器熄灭"); calls.keepAwakeRequests += 1; },
+    releaseKeepAwake() { calls.keepAwakeReleases += 1; }
+  },
   offscreen: { async createDocument() { offscreenOpen = true; } },
   notifications: {
     async create(id, options) { calls.notifications.push({ id, options }); }
@@ -64,6 +68,7 @@ globalThis.chrome = {
 await import(`../background.js?test=${Date.now()}`);
 await new Promise(resolve => setTimeout(resolve, 25));
 
+assert.ok(calls.keepAwakeReleases >= 1, "默认允许屏幕熄灭时应释放保持常亮请求");
 assert.ok(alarms.has("break-bell-tick"), "后台启动时应自动创建周期闹钟");
 assert.ok(alarms.has("break-bell-work-deadline"), "进入工作时段时应创建独立的截止闹钟");
 assert.equal(storage.state.mode, "work", "当前位于工作时段时应进入工作模式");
@@ -88,6 +93,14 @@ assert.equal(storage.soundStatus.title, "测试提醒", "播放声音时应记�
 await send({ type: "stopReminderSound" });
 assert.ok(calls.messages.some(message => message.type === "stop"), "点击知道了时应向声音页面发送停止消息");
 assert.equal(storage.soundStatus, null, "停止声音后应清除当前声音状态");
+
+const keepAwakeResponse = await send({ type: "setDisplaySleepAllowed", displaySleepAllowed: false });
+assert.deepEqual(keepAwakeResponse, { ok: true, displaySleepAllowed: false }, "关闭允许熄屏应成功返回");
+assert.equal(storage.settings.displaySleepAllowed, false, "保持常亮设置应持久化");
+assert.equal(calls.keepAwakeRequests, 1, "关闭允许熄屏时应请求保持显示器常亮");
+const allowSleepResponse = await send({ type: "setDisplaySleepAllowed", displaySleepAllowed: true });
+assert.deepEqual(allowSleepResponse, { ok: true, displaySleepAllowed: true }, "重新允许熄屏应成功返回");
+assert.equal(calls.keepAwakeReleases >= 2, true, "重新允许熄屏时应释放保持常亮请求");
 
 const dismissResponse = await send({ type: "dismissReminder", windowId: 99 });
 assert.equal(dismissResponse.ok, true, "确认提醒应成功关闭窗口");

@@ -8,6 +8,7 @@ const DEFAULTS = {
   soundEnabled: true,
   systemNotificationEnabled: true,
   popupEnabled: true,
+  displaySleepAllowed: true,
   windows: [{ start: "08:30", end: "22:00" }]
 };
 
@@ -263,6 +264,7 @@ $("save").addEventListener("click", async () => {
     soundEnabled: $("soundEnabled").checked,
     systemNotificationEnabled: $("systemNotificationEnabled").checked,
     popupEnabled: $("popupEnabled").checked,
+    displaySleepAllowed: settings.displaySleepAllowed,
     windows: normalizePeriods(periods).map(period => ({ start: toTime(period.start), end: toTime(Math.min(1439, period.end)) }))
   };
 
