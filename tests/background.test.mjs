@@ -8,6 +8,8 @@ const storage = {
     sound: "alarm",
     soundDurationMinutes: 5,
     customSound: "",
+    audioOutputDeviceId: "speaker-device-id",
+    audioOutputDeviceLabel: "扬声器",
     soundEnabled: true,
     systemNotificationEnabled: true,
     popupEnabled: true,
@@ -76,6 +78,7 @@ assert.ok(calls.notifications.length >= 1, "进入工作时段时应创建系统
 assert.ok(calls.windows.length >= 1, "进入工作时段时应打开提醒弹窗");
 assert.ok(calls.messages.some(message => message.target === "offscreen"), "提醒时应独立发送声音播放消息");
 assert.ok(calls.messages.some(message => message.type === "ring" && message.durationMinutes === 5), "铃声默认应循环五分钟");
+assert.ok(calls.messages.some(message => message.type === "ring" && message.audioOutputDeviceId === "speaker-device-id"), "应把选定的输出设备传给离屏播放器");
 
 function send(message) {
   return new Promise(resolve => {
@@ -90,6 +93,8 @@ assert.equal(response.ok, true, "测试提醒应成功返回");
 assert.ok(calls.notifications.length >= 2, "测试提醒应创建系统通知");
 assert.ok(calls.windows.length >= 2, "测试提醒应打开弹窗");
 assert.equal(storage.soundStatus.title, "测试提醒", "播放声音时应记录当前声音状态");
+await send({ type: "testReminder", audioOutputDeviceId: "preview-device-id" });
+assert.equal(calls.messages.at(-1).audioOutputDeviceId, "preview-device-id", "测试铃声应使用设置页当前选择的输出设备");
 await send({ type: "stopReminderSound" });
 assert.ok(calls.messages.some(message => message.type === "stop"), "点击知道了时应向声音页面发送停止消息");
 assert.equal(storage.soundStatus, null, "停止声音后应清除当前声音状态");

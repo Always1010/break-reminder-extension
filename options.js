@@ -5,6 +5,8 @@ const DEFAULTS = {
   sound: "alarm",
   soundDurationMinutes: 5,
   customSound: "",
+  audioOutputDeviceId: "",
+  audioOutputDeviceLabel: "",
   soundEnabled: true,
   systemNotificationEnabled: true,
   popupEnabled: true,
@@ -20,6 +22,75 @@ let settings;
 let periods = [];
 let selectedIndex = -1;
 let drag = null;
+let audioOutputSelectionInitialized = false;
+
+function setAudioOutputStatus(message, kind = "") {
+  const status = $("audioOutputStatus");
+  status.textContent = message;
+  status.dataset.kind = kind;
+}
+
+function renderAudioOutputs(outputs) {
+  const select = $("audioOutput");
+  const selectedId = audioOutputSelectionInitialized ? select.value : settings?.audioOutputDeviceId || "";
+  const selectedLabel = settings?.audioOutputDeviceLabel || "已保存的音频设备";
+  const defaultOption = new Option("系统默认输出（跟随浏览器）", "");
+  defaultOption.dataset.deviceLabel = "系统默认输出（跟随浏览器）";
+  select.replaceChildren(defaultOption);
+
+  outputs.forEach((device, index) => {
+    const label = device.label || `音频输出设备 ${index + 1}`;
+    const option = new Option(label, device.deviceId);
+    option.dataset.deviceLabel = label;
+    select.add(option);
+  });
+
+  if (selectedId && !outputs.some(device => device.deviceId === selectedId)) {
+    const unavailable = new Option(`${selectedLabel}（当前未连接或需要授权刷新）`, selectedId);
+    unavailable.dataset.unavailable = "true";
+    unavailable.dataset.deviceLabel = selectedLabel;
+    select.add(unavailable);
+  }
+  select.value = selectedId;
+  audioOutputSelectionInitialized = true;
+}
+
+async function refreshAudioOutputs({ requestPermission = false } = {}) {
+  const button = $("refreshAudioOutputs");
+  if (!navigator.mediaDevices?.enumerateDevices || !("setSinkId" in AudioContext.prototype)) {
+    button.disabled = true;
+    setAudioOutputStatus("当前浏览器不支持为插件单独选择声音输出设备。", "error");
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = requestPermission ? "正在请求授权…" : "正在读取设备…";
+  try {
+    if (requestPermission) {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+    }
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const outputs = devices.filter(device => device.kind === "audiooutput");
+    renderAudioOutputs(outputs);
+    const namedOutputs = outputs.filter(device => device.label).length;
+    setAudioOutputStatus(
+      namedOutputs
+        ? `已发现 ${namedOutputs} 个可识别的输出设备。选择后请保存设置并测试铃声。`
+        : "浏览器尚未显示完整设备名称，请点击“授权并刷新设备”。",
+      namedOutputs ? "success" : ""
+    );
+  } catch (error) {
+    const denied = error?.name === "NotAllowedError";
+    setAudioOutputStatus(
+      denied ? "未获得音频设备权限，仍可继续使用系统默认输出。" : `读取音频设备失败：${error?.message || error}`,
+      "error"
+    );
+  } finally {
+    button.disabled = false;
+    button.textContent = "授权并刷新设备";
+  }
+}
 
 function toMinutes(time) {
   const [hours, minutes] = time.split(":").map(Number);
@@ -181,6 +252,14 @@ $("add").addEventListener("click", () => {
   addPeriodAt(Math.min(1410, lastEnd + 90));
 });
 
+$("refreshAudioOutputs").addEventListener("click", () => {
+  void refreshAudioOutputs({ requestPermission: true });
+});
+
+navigator.mediaDevices?.addEventListener("devicechange", () => {
+  void refreshAudioOutputs();
+});
+
 $("testReminder").addEventListener("click", async () => {
   const button = $("testReminder");
   button.disabled = true;
@@ -202,6 +281,7 @@ $("testReminder").addEventListener("click", async () => {
       volume: Math.min(1, Math.max(0, Number($("volume").value) / 100)),
       soundDurationMinutes: Math.min(30, Math.max(0.5, Number($("soundDuration").value) || 5)),
       customSound,
+      audioOutputDeviceId: $("audioOutput").value,
       soundEnabled: $("soundEnabled").checked,
       systemNotificationEnabled: $("systemNotificationEnabled").checked,
       popupEnabled: $("popupEnabled").checked
@@ -234,7 +314,9 @@ async function init() {
   $("soundEnabled").checked = settings.soundEnabled;
   $("systemNotificationEnabled").checked = settings.systemNotificationEnabled;
   $("popupEnabled").checked = settings.popupEnabled;
+  $("audioOutput").value = settings.audioOutputDeviceId;
   renderTimeline();
+  await refreshAudioOutputs();
 }
 
 $("save").addEventListener("click", async () => {
@@ -261,6 +343,8 @@ $("save").addEventListener("click", async () => {
     sound: $("sound").value,
     soundDurationMinutes: Math.min(30, Math.max(0.5, Number($("soundDuration").value) || 5)),
     customSound,
+    audioOutputDeviceId: $("audioOutput").value,
+    audioOutputDeviceLabel: $("audioOutput").selectedOptions[0]?.dataset.deviceLabel || "",
     soundEnabled: $("soundEnabled").checked,
     systemNotificationEnabled: $("systemNotificationEnabled").checked,
     popupEnabled: $("popupEnabled").checked,

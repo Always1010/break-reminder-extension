@@ -13,6 +13,25 @@ let stopTimer;
 let playbackVersion = 0;
 const activeNodes = new Set();
 
+async function selectAudioOutput(deviceId) {
+  if (!("setSinkId" in context)) {
+    return deviceId ? "当前浏览器不支持指定铃声输出设备，已使用系统默认输出。" : "";
+  }
+
+  try {
+    await context.setSinkId(deviceId || "");
+    return "";
+  } catch (error) {
+    if (!deviceId) return "无法切换到系统默认输出，铃声将继续使用当前输出设备。";
+    try {
+      await context.setSinkId("");
+      return "所选音频设备当前不可用，铃声已回退到系统默认输出。";
+    } catch {
+      return "所选音频设备当前不可用，且无法切换到系统默认输出；铃声将继续使用当前输出设备。";
+    }
+  }
+}
+
 function stopPlayback() {
   clearTimeout(stopTimer);
   stopTimer = undefined;
@@ -101,6 +120,7 @@ async function playReminder(message) {
   const version = playbackVersion;
   context ||= new AudioContext();
   if (context.state === "suspended") await context.resume();
+  const outputWarning = await selectAudioOutput(message.audioOutputDeviceId);
 
   const durationMinutes = Math.min(30, Math.max(0.5, Number(message.durationMinutes) || 5));
   const gain = context.createGain();
@@ -117,6 +137,7 @@ async function playReminder(message) {
   });
 
   stopTimer = setTimeout(stopPlayback, durationMinutes * 60 * 1000);
+  return outputWarning;
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -124,7 +145,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "ring") {
     playReminder(message)
-      .then(() => sendResponse({ ok: true }))
+      .then(warning => sendResponse(warning ? { ok: true, warning } : { ok: true }))
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }

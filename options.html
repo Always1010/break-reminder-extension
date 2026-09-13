@@ -51,6 +51,20 @@
       <div class="field"><label for="volume">音量（0 - 100）</label><input id="volume" type="number" min="0" max="100"></div>
       <div class="field"><label for="soundDuration">铃声循环时长（分钟）</label><input id="soundDuration" type="number" min="0.5" max="30" step="0.5"></div>
     </div>
+    <div class="audio-output-panel">
+      <div class="audio-output-heading">
+        <div>
+          <label for="audioOutput">铃声输出设备</label>
+          <p class="muted">只改变本插件的铃声；浏览器中的音乐、视频仍使用系统默认输出。</p>
+        </div>
+        <button id="refreshAudioOutputs" class="add" type="button">授权并刷新设备</button>
+      </div>
+      <select id="audioOutput">
+        <option value="">系统默认输出（跟随浏览器）</option>
+      </select>
+      <p class="audio-output-guide">首次查看完整设备列表时，浏览器可能显示“麦克风”权限提示。这项权限仅用于识别扬声器、耳机等音频设备；插件会立即关闭输入，不录音，也不上传音频。</p>
+      <p id="audioOutputStatus" class="audio-output-status" aria-live="polite"></p>
+    </div>
     <div class="field custom-sound"><label for="custom">自定义声音（可选，MP3/WAV/OGG）</label><input id="custom" type="file" accept="audio/*"></div>
     <button id="testReminder" class="add test-reminder" type="button">🔔 测试声音、通知和弹窗</button>
   </section>

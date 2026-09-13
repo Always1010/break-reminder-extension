@@ -10,6 +10,8 @@ const DEFAULT_SETTINGS = {
   sound: "alarm",
   soundDurationMinutes: 5,
   customSound: "",
+  audioOutputDeviceId: "",
+  audioOutputDeviceLabel: "",
   soundEnabled: true,
   systemNotificationEnabled: true,
   popupEnabled: true,
@@ -132,13 +134,15 @@ async function ring(settings, soundStatus) {
     sound: settings.sound,
     customSound: settings.customSound,
     volume: settings.volume,
-    durationMinutes: settings.soundDurationMinutes
+    durationMinutes: settings.soundDurationMinutes,
+    audioOutputDeviceId: settings.audioOutputDeviceId
   });
   if (!response?.ok) throw new Error(response?.error || "声音播放失败");
   const durationMinutes = Math.min(30, Math.max(0.5, Number(settings.soundDurationMinutes) || 5));
   await chrome.storage.local.set({
     soundStatus: { ...soundStatus, endsAt: Date.now() + durationMinutes * 60 * 1000 }
   });
+  return { warning: response.warning || "" };
 }
 
 async function stopSound() {
@@ -191,13 +195,17 @@ async function notify(title, message, { kind = "reminder", durationMinutes = 0, 
   const errors = results
     .filter(result => result.status === "rejected")
     .map(result => String(result.reason?.message || result.reason));
+  const warnings = results
+    .filter(result => result.status === "fulfilled" && result.value?.warning)
+    .map(result => result.value.warning);
   await recordDiagnostic({
     lastReminderAt: Date.now(),
     lastReminderTitle: title,
-    lastReminderError: errors.join("；")
+    lastReminderError: errors.join("；"),
+    lastReminderWarning: warnings.join("；")
   });
   if (results.length && errors.length === results.length) throw new Error(errors.join("；"));
-  return { errors };
+  return { errors, warnings };
 }
 
 async function tick({ workDeadlineDue = false } = {}) {
@@ -428,6 +436,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       volume: message.volume,
       soundDurationMinutes: message.soundDurationMinutes,
       customSound: message.customSound,
+      audioOutputDeviceId: message.audioOutputDeviceId,
       soundEnabled: message.soundEnabled,
       systemNotificationEnabled: message.systemNotificationEnabled,
       popupEnabled: message.popupEnabled
@@ -436,7 +445,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       kind: "test",
       settingsOverride
     })
-      .then(result => sendResponse({ ok: true, warning: result.errors.join("；") }))
+      .then(result => sendResponse({ ok: true, warning: [...result.errors, ...result.warnings].join("；") }))
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 const sources = [];
 const timers = [];
+const sinkIds = [];
 let messageListener;
 
 class FakeAudioBuffer {
@@ -59,6 +60,11 @@ class FakeAudioContext {
   async decodeAudioData() {
     return this.createBuffer(1, this.sampleRate, this.sampleRate);
   }
+
+  async setSinkId(deviceId) {
+    sinkIds.push(deviceId);
+    if (deviceId === "missing-device") throw new DOMException("Device missing", "NotFoundError");
+  }
 }
 
 const originalSetTimeout = globalThis.setTimeout;
@@ -90,7 +96,8 @@ const alarmResponse = await send({
   type: "ring",
   sound: "alarm",
   volume: 0.8,
-  durationMinutes: 5
+  durationMinutes: 5,
+  audioOutputDeviceId: "speaker-device"
 });
 
 assert.deepEqual(alarmResponse, { ok: true }, "默认闹钟应能开始播放");
@@ -98,6 +105,7 @@ assert.equal(sources.length, 1, "默认闹钟应创建一个持续音源");
 assert.equal(sources[0].loop, true, "默认闹钟应由音频引擎持续循环，而非依赖 JavaScript 定时重播");
 assert.equal(sources[0].started, true, "默认闹钟应开始播放");
 assert.equal(timers.at(-1).delay, 5 * 60 * 1000, "默认闹钟应在五分钟后自动停止");
+assert.equal(sinkIds.at(-1), "speaker-device", "闹钟应路由到用户选择的输出设备");
 
 const softResponse = await send({
   target: "offscreen",
@@ -111,6 +119,7 @@ assert.deepEqual(softResponse, { ok: true }, "轻柔提示音应能开始播放"
 assert.equal(sources[0].stopped, true, "开始新铃声前应停止旧铃声");
 assert.equal(sources[1].loop, true, "轻柔提示音也应持续循环");
 assert.equal(timers.at(-1).delay, 30 * 1000, "可配置的播放时长应生效");
+assert.equal(sinkIds.at(-1), "", "未指定输出设备时应恢复到系统默认输出");
 
 const calmResponse = await send({
   target: "offscreen",
@@ -128,6 +137,18 @@ assert.equal(sources[3].loop, false, "重建后的宁静氛围音乐应继续链
 
 await send({ target: "offscreen", type: "stop" });
 assert.equal(sources[3].stopped, true, "收到停止消息后应立即停止循环音源");
+
+const fallbackResponse = await send({
+  target: "offscreen",
+  type: "ring",
+  sound: "alarm",
+  volume: 0.8,
+  durationMinutes: 0.5,
+  audioOutputDeviceId: "missing-device"
+});
+assert.equal(fallbackResponse.ok, true, "输出设备不可用时仍应播放提醒");
+assert.match(fallbackResponse.warning, /回退到系统默认输出/, "输出设备不可用时应返回回退提示");
+assert.deepEqual(sinkIds.slice(-2), ["missing-device", ""], "指定设备失败后应切换回系统默认输出");
 
 globalThis.setTimeout = originalSetTimeout;
 globalThis.clearTimeout = originalClearTimeout;
